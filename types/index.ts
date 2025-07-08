@@ -22,6 +22,9 @@ export interface User {
   location: string;
   expectedSalary: string;
   bio: string;
+  phone?: string;
+   website?: string;   
+  linkedin?: string;  
   skills: Skill[];
   workExperience: WorkExperience[];
   education: Education[];

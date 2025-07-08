@@ -1,153 +1,451 @@
-import React, { useState, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  ScrollView, 
-  TouchableOpacity, 
-  TextInput, 
-  Alert, 
-  Image, 
+import React, { useState, useRef, useCallback } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  Image,
   KeyboardAvoidingView,
   Platform,
-  Keyboard
+  Keyboard,
+  ActivityIndicator,
+  Dimensions,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { User, Mail, MapPin, DollarSign, Plus, CreditCard as Edit3, Briefcase, GraduationCap, Camera, Check, X, Save, CircleAlert as AlertCircle } from 'lucide-react-native';
+import {
+  User,
+  Mail,
+  MapPin,
+  DollarSign,
+  Plus,
+  CreditCard as Edit3,
+  Briefcase,
+  GraduationCap,
+  Camera,
+  Check,
+  X,
+  Save,
+  CircleAlert as AlertCircle,
+  Upload,
+  Image as ImageIcon,
+  Trash2,
+  Calendar,
+} from 'lucide-react-native';
 import { useApp } from '../../context/AppContext';
+import * as ImagePicker from 'expo-image-picker';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
+  interpolateColor,
+} from 'react-native-reanimated';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+
+interface ValidationErrors {
+  [key: string]: string;
+}
+
+interface FormData {
+  fullName: string;
+  email: string;
+  location: string;
+  expectedSalary: string;
+  bio: string;
+  phone: string;
+  website: string;
+  linkedin: string;
+}
+
+interface WorkExperienceForm {
+  company: string;
+  position: string;
+  startDate: string;
+  endDate: string;
+  current: boolean;
+  responsibilities: string;
+  achievements: string;
+}
+
+interface EducationForm {
+  institution: string;
+  degree: string;
+  field: string;
+  graduationYear: string;
+  gpa: string;
+  achievements: string;
+  honors: string;
+}
 
 export default function ProfileTab() {
   const { state, dispatch } = useApp();
   const [editingSection, setEditingSection] = useState<string | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<FormData>({
     fullName: state.user?.fullName || '',
     email: state.user?.email || '',
     location: state.user?.location || '',
     expectedSalary: state.user?.expectedSalary || '',
     bio: state.user?.bio || '',
+    phone: state.user?.phone || '',
+    website: state.user?.website || '',
+    linkedin: state.user?.linkedin || '',
   });
-  const [newSkill, setNewSkill] = useState('');
-  const [workExperience, setWorkExperience] = useState({
-    company: '',
-    position: '',
-    duration: '',
-    responsibilities: '',
-    current: false,
-  });
-  const [education, setEducation] = useState({
+
+  // Work Experience Form
+  const [workExperienceForm, setWorkExperienceForm] =
+    useState<WorkExperienceForm>({
+      company: '',
+      position: '',
+      startDate: '',
+      endDate: '',
+      current: false,
+      responsibilities: '',
+      achievements: '',
+    });
+
+  // Education Form
+  const [educationForm, setEducationForm] = useState<EducationForm>({
     institution: '',
     degree: '',
     field: '',
     graduationYear: '',
     gpa: '',
     achievements: '',
+    honors: '',
   });
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [saveStatus, setSaveStatus] = useState<Record<string, 'idle' | 'saving' | 'success' | 'error'>>({});
+
+  const [newSkill, setNewSkill] = useState('');
+  const [errors, setErrors] = useState<ValidationErrors>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitStatus, setSubmitStatus] = useState<
+    'idle' | 'success' | 'error'
+  >('idle');
+  const [profileImage, setProfileImage] = useState<string | null>(
+    state.user?.profilePicture || null
+  );
+  const [imageUploading, setImageUploading] = useState(false);
+  const [showImageOptions, setShowImageOptions] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+
+  // Animation values
+  const successOpacity = useSharedValue(0);
+  const errorShake = useSharedValue(0);
+  const imageScale = useSharedValue(1);
 
   // Refs for managing focus
   const scrollViewRef = useRef<ScrollView>(null);
   const inputRefs = useRef<Record<string, TextInput>>({});
 
-  const validateForm = () => {
-    const newErrors: Record<string, string> = {};
-    
+  // Keyboard event listeners
+  React.useEffect(() => {
+    const keyboardDidShowListener = Keyboard.addListener(
+      'keyboardDidShow',
+      () => {
+        setKeyboardVisible(true);
+      }
+    );
+    const keyboardDidHideListener = Keyboard.addListener(
+      'keyboardDidHide',
+      () => {
+        setKeyboardVisible(false);
+      }
+    );
+
+    return () => {
+      keyboardDidShowListener?.remove();
+      keyboardDidHideListener?.remove();
+    };
+  }, []);
+
+  // Validation functions
+  const validateEmail = (email: string): boolean => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
+  const validatePhone = (phone: string): boolean => {
+    const phoneRegex = /^[\+]?[1-9][\d]{0,15}$/;
+    return phoneRegex.test(phone.replace(/[\s\-\(\)]/g, ''));
+  };
+
+  const validateURL = (url: string): boolean => {
+    try {
+      new URL(url.startsWith('http') ? url : `https://${url}`);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const validateForm = useCallback((): boolean => {
+    const newErrors: ValidationErrors = {};
+
+    // Required fields
     if (!formData.fullName.trim()) {
       newErrors.fullName = 'Full name is required';
+    } else if (formData.fullName.trim().length < 2) {
+      newErrors.fullName = 'Name must be at least 2 characters';
     }
-    
+
     if (!formData.email.trim()) {
       newErrors.email = 'Email is required';
-    } else if (!/\S+@\S+\.\S+/.test(formData.email)) {
+    } else if (!validateEmail(formData.email)) {
       newErrors.email = 'Please enter a valid email address';
     }
-    
+
     if (!formData.location.trim()) {
       newErrors.location = 'Location is required';
     }
-    
+
+    // Optional field validations
+    if (formData.phone && !validatePhone(formData.phone)) {
+      newErrors.phone = 'Please enter a valid phone number';
+    }
+
+    if (formData.website && !validateURL(formData.website)) {
+      newErrors.website = 'Please enter a valid website URL';
+    }
+
+    if (formData.linkedin && !validateURL(formData.linkedin)) {
+      newErrors.linkedin = 'Please enter a valid LinkedIn URL';
+    }
+
+    if (formData.bio && formData.bio.length > 500) {
+      newErrors.bio = 'Bio must be less than 500 characters';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };
+  }, [formData]);
 
-  const validateWorkExperience = () => {
-    const newErrors: Record<string, string> = {};
-    
-    if (!workExperience.company.trim()) {
+  const validateWorkExperience = (): boolean => {
+    const newErrors: ValidationErrors = {};
+
+    if (!workExperienceForm.company.trim()) {
       newErrors.company = 'Company name is required';
     }
-    
-    if (!workExperience.position.trim()) {
+
+    if (!workExperienceForm.position.trim()) {
       newErrors.position = 'Position is required';
     }
-    
-    if (!workExperience.duration.trim()) {
-      newErrors.duration = 'Duration is required';
+
+    if (!workExperienceForm.startDate.trim()) {
+      newErrors.startDate = 'Start date is required';
     }
-    
-    if (!workExperience.responsibilities.trim()) {
+
+    if (!workExperienceForm.current && !workExperienceForm.endDate.trim()) {
+      newErrors.endDate = 'End date is required (or mark as current)';
+    }
+
+    if (!workExperienceForm.responsibilities.trim()) {
       newErrors.responsibilities = 'Responsibilities are required';
     }
-    
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const validateEducation = () => {
-    const newErrors: Record<string, string> = {};
-    
-    if (!education.institution.trim()) {
+  const validateEducation = (): boolean => {
+    const newErrors: ValidationErrors = {};
+
+    if (!educationForm.institution.trim()) {
       newErrors.institution = 'Institution name is required';
     }
-    
-    if (!education.degree.trim()) {
+
+    if (!educationForm.degree.trim()) {
       newErrors.degree = 'Degree is required';
     }
-    
-    if (!education.field.trim()) {
+
+    if (!educationForm.field.trim()) {
       newErrors.field = 'Field of study is required';
     }
-    
-    if (!education.graduationYear.trim()) {
+
+    if (!educationForm.graduationYear.trim()) {
       newErrors.graduationYear = 'Graduation year is required';
+    } else if (!/^\d{4}$/.test(educationForm.graduationYear)) {
+      newErrors.graduationYear = 'Please enter a valid 4-digit year';
     }
-    
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSave = async () => {
-    if (!validateForm()) {
-      Alert.alert('Validation Error', 'Please fix the errors before saving.');
+  // Real-time validation
+  const handleFieldChange = useCallback(
+    (field: keyof FormData, value: string) => {
+      setFormData((prev) => ({ ...prev, [field]: value }));
+
+      // Clear error for this field if it exists
+      if (errors[field]) {
+        setErrors((prev) => ({ ...prev, [field]: '' }));
+      }
+
+      // Real-time validation for specific fields
+      if (field === 'email' && value && !validateEmail(value)) {
+        setErrors((prev) => ({ ...prev, email: 'Invalid email format' }));
+      }
+    },
+    [errors]
+  );
+
+  // Image picker functions
+  const requestImagePermissions = async () => {
+    if (Platform.OS !== 'web') {
+      const { status } =
+        await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        setErrors((prev) => ({
+          ...prev,
+          image: 'Permission to access photos is required',
+        }));
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const pickImageFromLibrary = async () => {
+    const hasPermission = await requestImagePermissions();
+    if (!hasPermission) return;
+
+    setImageUploading(true);
+    imageScale.value = withSpring(0.95);
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+        base64: false,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const imageUri = result.assets[0].uri;
+        setProfileImage(imageUri);
+
+        // Simulate upload delay
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        setShowImageOptions(false);
+        successOpacity.value = withTiming(1, { duration: 300 });
+        setTimeout(() => {
+          successOpacity.value = withTiming(0, { duration: 300 });
+        }, 2000);
+      }
+    } catch (error) {
+      setErrors((prev) => ({ ...prev, image: 'Failed to select image' }));
+      errorShake.value = withSpring(1, {}, () => {
+        errorShake.value = withSpring(0);
+      });
+    } finally {
+      setImageUploading(false);
+      imageScale.value = withSpring(1);
+    }
+  };
+
+  const takePhoto = async () => {
+    if (Platform.OS === 'web') {
+      // Web doesn't support camera, fallback to library
+      pickImageFromLibrary();
       return;
     }
 
-    setSaveStatus(prev => ({ ...prev, basic: 'saving' }));
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      setErrors((prev) => ({
+        ...prev,
+        image: 'Camera permission is required',
+      }));
+      return;
+    }
+
+    setImageUploading(true);
+    imageScale.value = withSpring(0.95);
 
     try {
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const imageUri = result.assets[0].uri;
+        setProfileImage(imageUri);
+        setShowImageOptions(false);
+
+        successOpacity.value = withTiming(1, { duration: 300 });
+        setTimeout(() => {
+          successOpacity.value = withTiming(0, { duration: 300 });
+        }, 2000);
+      }
+    } catch (error) {
+      setErrors((prev) => ({ ...prev, image: 'Failed to take photo' }));
+    } finally {
+      setImageUploading(false);
+      imageScale.value = withSpring(1);
+    }
+  };
+
+  // Form submission
+  const handleSave = async () => {
+    if (!validateForm()) {
+      errorShake.value = withSpring(1, {}, () => {
+        errorShake.value = withSpring(0);
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+    setSubmitStatus('idle');
+
+    try {
+      // Simulate API call
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+
       const updatedUser = {
         id: state.user?.id || '1',
         ...formData,
         skills: state.user?.skills || [],
         workExperience: state.user?.workExperience || [],
         education: state.user?.education || [],
-        profilePicture: state.user?.profilePicture,
+        profilePicture: profileImage,
       };
-      
-      dispatch({ type: 'SET_USER', payload: updatedUser });
+
+      dispatch({
+        type: 'SET_USER',
+        payload: {
+          ...updatedUser,
+          profilePicture: updatedUser.profilePicture ?? undefined,
+        },
+      });
       setEditingSection(null);
       setErrors({});
-      setSaveStatus(prev => ({ ...prev, basic: 'success' }));
-      
-      // Reset success status after 2 seconds
+      setSubmitStatus('success');
+
+      // Success animation
+      successOpacity.value = withTiming(1, { duration: 300 });
       setTimeout(() => {
-        setSaveStatus(prev => ({ ...prev, basic: 'idle' }));
-      }, 2000);
-      
-      Alert.alert('Success', 'Profile updated successfully!');
+        successOpacity.value = withTiming(0, { duration: 300 });
+        setSubmitStatus('idle');
+      }, 3000);
     } catch (error) {
-      setSaveStatus(prev => ({ ...prev, basic: 'error' }));
-      Alert.alert('Error', 'Failed to save profile. Please try again.');
+      setSubmitStatus('error');
+      setErrors((prev) => ({
+        ...prev,
+        submit: 'Failed to save profile. Please try again.',
+      }));
+
+      errorShake.value = withSpring(1, {}, () => {
+        errorShake.value = withSpring(0);
+      });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -158,18 +456,23 @@ export default function ProfileTab() {
       location: state.user?.location || '',
       expectedSalary: state.user?.expectedSalary || '',
       bio: state.user?.bio || '',
+      phone: state.user?.phone || '',
+      website: state.user?.website || '',
+      linkedin: state.user?.linkedin || '',
     });
     setErrors({});
     setEditingSection(null);
+    setSubmitStatus('idle');
     Keyboard.dismiss();
   };
 
+  // Skills management
   const addSkill = () => {
     if (!newSkill.trim()) {
-      Alert.alert('Error', 'Please enter a skill name');
+      setErrors((prev) => ({ ...prev, skill: 'Please enter a skill name' }));
       return;
     }
-    
+
     const updatedUser = {
       ...state.user!,
       skills: [
@@ -179,134 +482,199 @@ export default function ProfileTab() {
           name: newSkill.trim(),
           level: 'Intermediate' as const,
           endorsements: 0,
-        }
-      ]
+        },
+      ],
     };
-    
+
     dispatch({ type: 'SET_USER', payload: updatedUser });
     setNewSkill('');
-    Alert.alert('Success', 'Skill added successfully!');
+    setErrors((prev) => ({ ...prev, skill: '' }));
   };
 
   const removeSkill = (skillId: string) => {
     const updatedUser = {
       ...state.user!,
-      skills: state.user?.skills?.filter(skill => skill.id !== skillId) || []
+      skills: state.user?.skills?.filter((skill) => skill.id !== skillId) || [],
     };
-    
+
     dispatch({ type: 'SET_USER', payload: updatedUser });
   };
 
+  // Work Experience management
   const saveWorkExperience = async () => {
     if (!validateWorkExperience()) {
-      Alert.alert('Validation Error', 'Please fill in all required fields.');
+      errorShake.value = withSpring(1, {}, () => {
+        errorShake.value = withSpring(0);
+      });
       return;
     }
 
-    setSaveStatus(prev => ({ ...prev, experience: 'saving' }));
+    setIsSubmitting(true);
 
     try {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const newExperience = {
+        id: Date.now().toString(),
+        company: workExperienceForm.company.trim(),
+        position: workExperienceForm.position.trim(),
+        duration: workExperienceForm.current
+          ? `${workExperienceForm.startDate} - Present`
+          : `${workExperienceForm.startDate} - ${workExperienceForm.endDate}`,
+        responsibilities: workExperienceForm.responsibilities
+          .trim()
+          .split('\n')
+          .filter((r) => r.trim()),
+        current: workExperienceForm.current,
+      };
+
       const updatedUser = {
         ...state.user!,
-        workExperience: [
-          ...(state.user?.workExperience || []),
-          {
-            id: Date.now().toString(),
-            company: workExperience.company.trim(),
-            position: workExperience.position.trim(),
-            duration: workExperience.duration.trim(),
-            responsibilities: workExperience.responsibilities.trim().split('\n').filter(r => r.trim()),
-            current: workExperience.current,
-          }
-        ]
+        workExperience: [...(state.user?.workExperience || []), newExperience],
       };
-      
+
       dispatch({ type: 'SET_USER', payload: updatedUser });
-      setWorkExperience({
+
+      // Reset form
+      setWorkExperienceForm({
         company: '',
         position: '',
-        duration: '',
-        responsibilities: '',
+        startDate: '',
+        endDate: '',
         current: false,
-      });
-      setErrors({});
-      setSaveStatus(prev => ({ ...prev, experience: 'success' }));
-      
-      setTimeout(() => {
-        setSaveStatus(prev => ({ ...prev, experience: 'idle' }));
-      }, 2000);
-      
-      Alert.alert('Success', 'Work experience added successfully!');
-    } catch (error) {
-      setSaveStatus(prev => ({ ...prev, experience: 'error' }));
-      Alert.alert('Error', 'Failed to save work experience. Please try again.');
-    }
-  };
-
-  const saveEducation = async () => {
-    if (!validateEducation()) {
-      Alert.alert('Validation Error', 'Please fill in all required fields.');
-      return;
-    }
-
-    setSaveStatus(prev => ({ ...prev, education: 'saving' }));
-
-    try {
-      const updatedUser = {
-        ...state.user!,
-        education: [
-          ...(state.user?.education || []),
-          {
-            id: Date.now().toString(),
-            institution: education.institution.trim(),
-            degree: education.degree.trim(),
-            field: education.field.trim(),
-            graduationYear: parseInt(education.graduationYear),
-            gpa: education.gpa.trim(),
-            achievements: education.achievements.trim().split('\n').filter(a => a.trim()),
-          }
-        ]
-      };
-      
-      dispatch({ type: 'SET_USER', payload: updatedUser });
-      setEducation({
-        institution: '',
-        degree: '',
-        field: '',
-        graduationYear: '',
-        gpa: '',
+        responsibilities: '',
         achievements: '',
       });
+
       setErrors({});
-      setSaveStatus(prev => ({ ...prev, education: 'success' }));
-      
+
+      successOpacity.value = withTiming(1, { duration: 300 });
       setTimeout(() => {
-        setSaveStatus(prev => ({ ...prev, education: 'idle' }));
+        successOpacity.value = withTiming(0, { duration: 300 });
       }, 2000);
-      
-      Alert.alert('Success', 'Education added successfully!');
     } catch (error) {
-      setSaveStatus(prev => ({ ...prev, education: 'error' }));
-      Alert.alert('Error', 'Failed to save education. Please try again.');
+      setErrors((prev) => ({
+        ...prev,
+        workExperience: 'Failed to save work experience',
+      }));
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const removeWorkExperience = (expId: string) => {
     const updatedUser = {
       ...state.user!,
-      workExperience: state.user?.workExperience?.filter(exp => exp.id !== expId) || []
+      workExperience:
+        state.user?.workExperience?.filter((exp) => exp.id !== expId) || [],
     };
-    
+
     dispatch({ type: 'SET_USER', payload: updatedUser });
+  };
+
+  // Education management
+  const saveEducation = async () => {
+    if (!validateEducation()) {
+      errorShake.value = withSpring(1, {}, () => {
+        errorShake.value = withSpring(0);
+      });
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
+      const newEducation = {
+        id: Date.now().toString(),
+        institution: educationForm.institution.trim(),
+        degree: educationForm.degree.trim(),
+        field: educationForm.field.trim(),
+        graduationYear: parseInt(educationForm.graduationYear),
+        gpa: educationForm.gpa.trim(),
+        achievements: educationForm.achievements
+          .trim()
+          .split('\n')
+          .filter((a) => a.trim()),
+      };
+
+      const updatedUser = {
+        ...state.user!,
+        education: [...(state.user?.education || []), newEducation],
+      };
+
+      dispatch({ type: 'SET_USER', payload: updatedUser });
+
+      // Reset form
+      setEducationForm({
+        institution: '',
+        degree: '',
+        field: '',
+        graduationYear: '',
+        gpa: '',
+        achievements: '',
+        honors: '',
+      });
+
+      setErrors({});
+
+      successOpacity.value = withTiming(1, { duration: 300 });
+      setTimeout(() => {
+        successOpacity.value = withTiming(0, { duration: 300 });
+      }, 2000);
+    } catch (error) {
+      setErrors((prev) => ({ ...prev, education: 'Failed to save education' }));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const removeEducation = (eduId: string) => {
     const updatedUser = {
       ...state.user!,
-      education: state.user?.education?.filter(edu => edu.id !== eduId) || []
+      education: state.user?.education?.filter((edu) => edu.id !== eduId) || [],
     };
-    
+
     dispatch({ type: 'SET_USER', payload: updatedUser });
+  };
+
+  // Animated styles
+  const successAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: successOpacity.value,
+      transform: [{ scale: successOpacity.value }],
+    };
+  });
+
+  const errorAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ translateX: errorShake.value * 10 }],
+    };
+  });
+
+  const imageAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: imageScale.value }],
+    };
+  });
+
+  // Progress calculation
+  const getProfileCompletion = () => {
+    let completed = 0;
+    const total = 8;
+
+    if (formData.fullName && formData.email && formData.location) completed++;
+    if (profileImage) completed++;
+    if (formData.bio) completed++;
+    if (formData.phone) completed++;
+    if (state.user?.skills && state.user.skills.length > 0) completed++;
+    if (state.user?.workExperience && state.user.workExperience.length > 0)
+      completed++;
+    if (state.user?.education && state.user.education.length > 0) completed++;
+    if (formData.website || formData.linkedin) completed++;
+
+    return Math.round((completed / total) * 100);
   };
 
   const ProfileSection = ({ title, icon: Icon, children, sectionKey }: any) => (
@@ -318,7 +686,8 @@ export default function ProfileTab() {
         </View>
         <TouchableOpacity
           style={styles.editButton}
-          onPress={() => setEditingSection(sectionKey)}>
+          onPress={() => setEditingSection(sectionKey)}
+        >
           <Edit3 size={16} color="#7c3aed" />
         </TouchableOpacity>
       </View>
@@ -326,119 +695,305 @@ export default function ProfileTab() {
     </View>
   );
 
+  const renderPhotoSection = () => (
+    <View style={styles.photoSection}>
+      <Text style={styles.photoSectionTitle}>Profile Photo</Text>
+      <View style={styles.photoContainer}>
+        <Animated.View style={[styles.photoWrapper, imageAnimatedStyle]}>
+          <TouchableOpacity
+            style={styles.profilePicture}
+            onPress={() => setShowImageOptions(true)}
+            disabled={imageUploading}
+          >
+            {profileImage ? (
+              <Image
+                source={{ uri: profileImage }}
+                style={styles.profileImage}
+              />
+            ) : (
+              <View style={styles.placeholderImage}>
+                <User size={32} color="#64748b" />
+              </View>
+            )}
+            {imageUploading && (
+              <View style={styles.uploadingOverlay}>
+                <ActivityIndicator size="small" color="#ffffff" />
+              </View>
+            )}
+          </TouchableOpacity>
+        </Animated.View>
+
+        <View style={styles.photoActions}>
+          <TouchableOpacity
+            style={styles.photoButton}
+            onPress={() => setShowImageOptions(true)}
+            disabled={imageUploading}
+          >
+            <Camera size={16} color="#7c3aed" />
+            <Text style={styles.photoButtonText}>
+              {profileImage ? 'Change Photo' : 'Add Photo'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Image Options Modal */}
+      {showImageOptions && (
+        <View style={styles.imageOptionsOverlay}>
+          <View style={styles.imageOptionsModal}>
+            <Text style={styles.imageOptionsTitle}>Select Photo</Text>
+            <TouchableOpacity
+              style={styles.imageOption}
+              onPress={pickImageFromLibrary}
+            >
+              <ImageIcon size={20} color="#7c3aed" />
+              <Text style={styles.imageOptionText}>Choose from Library</Text>
+            </TouchableOpacity>
+            {Platform.OS !== 'web' && (
+              <TouchableOpacity style={styles.imageOption} onPress={takePhoto}>
+                <Camera size={20} color="#7c3aed" />
+                <Text style={styles.imageOptionText}>Take Photo</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity
+              style={styles.imageOptionCancel}
+              onPress={() => setShowImageOptions(false)}
+            >
+              <Text style={styles.imageOptionCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {errors.image && <Text style={styles.errorText}>{errors.image}</Text>}
+    </View>
+  );
+
   const renderBasicInfo = () => (
     <ProfileSection title="Basic Information" icon={User} sectionKey="basic">
       {editingSection === 'basic' ? (
-        <View style={styles.editForm}>
+        <Animated.View style={[styles.editForm, errorAnimatedStyle]}>
           <View style={styles.inputRow}>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>
                 Full Name <Text style={styles.required}>*</Text>
               </Text>
               <TextInput
-                ref={(ref) => inputRefs.current['fullName'] = ref!}
+                ref={(ref) => {
+                  if (ref) inputRefs.current['fullName'] = ref;
+                }}
                 style={[styles.input, errors.fullName && styles.inputError]}
                 value={formData.fullName}
-                onChangeText={(text) => {
-                  setFormData({ ...formData, fullName: text });
-                  if (errors.fullName) setErrors({ ...errors, fullName: '' });
-                }}
+                onChangeText={(text) => handleFieldChange('fullName', text)}
                 placeholder="Your full name"
                 returnKeyType="next"
-                onSubmitEditing={() => inputRefs.current['email']?.focus()}
+                onSubmitEditing={() => {
+                  setTimeout(() => inputRefs.current['email']?.focus(), 100);
+                }}
                 blurOnSubmit={false}
               />
-              {errors.fullName && <Text style={styles.errorText}>{errors.fullName}</Text>}
+              {errors.fullName && (
+                <Text style={styles.errorText}>{errors.fullName}</Text>
+              )}
             </View>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>
                 Email <Text style={styles.required}>*</Text>
               </Text>
               <TextInput
-                ref={(ref) => inputRefs.current['email'] = ref!}
+                ref={(ref) => {
+                  if (ref) inputRefs.current['email'] = ref;
+                }}
                 style={[styles.input, errors.email && styles.inputError]}
                 value={formData.email}
-                onChangeText={(text) => {
-                  setFormData({ ...formData, email: text });
-                  if (errors.email) setErrors({ ...errors, email: '' });
-                }}
+                onChangeText={(text) => handleFieldChange('email', text)}
                 placeholder="your.email@example.com"
                 keyboardType="email-address"
                 autoCapitalize="none"
                 returnKeyType="next"
-                onSubmitEditing={() => inputRefs.current['location']?.focus()}
+                onSubmitEditing={() => {
+                  setTimeout(() => inputRefs.current['phone']?.focus(), 100);
+                }}
                 blurOnSubmit={false}
               />
-              {errors.email && <Text style={styles.errorText}>{errors.email}</Text>}
+              {errors.email && (
+                <Text style={styles.errorText}>{errors.email}</Text>
+              )}
             </View>
           </View>
-          
+
           <View style={styles.inputRow}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Phone</Text>
+              <TextInput
+                ref={(ref) => {
+                  inputRefs.current['phone'] = ref!;
+                }}
+                style={[styles.input, errors.phone && styles.inputError]}
+                value={formData.phone}
+                onChangeText={(text) => handleFieldChange('phone', text)}
+                placeholder="+1 (555) 123-4567"
+                keyboardType="phone-pad"
+                returnKeyType="next"
+                onSubmitEditing={() => {
+                  setTimeout(() => inputRefs.current['location']?.focus(), 100);
+                }}
+                blurOnSubmit={false}
+              />
+              {errors.phone && (
+                <Text style={styles.errorText}>{errors.phone}</Text>
+              )}
+            </View>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>
                 Location <Text style={styles.required}>*</Text>
               </Text>
               <TextInput
-                ref={(ref) => inputRefs.current['location'] = ref!}
+                ref={(ref) => {
+                  inputRefs.current['location'] = ref!;
+                }}
                 style={[styles.input, errors.location && styles.inputError]}
                 value={formData.location}
-                onChangeText={(text) => {
-                  setFormData({ ...formData, location: text });
-                  if (errors.location) setErrors({ ...errors, location: '' });
-                }}
+                onChangeText={(text) => handleFieldChange('location', text)}
                 placeholder="City, State"
                 returnKeyType="next"
-                onSubmitEditing={() => inputRefs.current['expectedSalary']?.focus()}
+                onSubmitEditing={() => {
+                  setTimeout(
+                    () => inputRefs.current['expectedSalary']?.focus(),
+                    100
+                  );
+                }}
                 blurOnSubmit={false}
               />
-              {errors.location && <Text style={styles.errorText}>{errors.location}</Text>}
+              {errors.location && (
+                <Text style={styles.errorText}>{errors.location}</Text>
+              )}
             </View>
+          </View>
+
+          <View style={styles.inputRow}>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>Expected Salary</Text>
               <TextInput
-                ref={(ref) => inputRefs.current['expectedSalary'] = ref!}
+                ref={(ref) => {
+                  inputRefs.current['expectedSalary'] = ref!;
+                }}
                 style={styles.input}
                 value={formData.expectedSalary}
-                onChangeText={(text) => setFormData({ ...formData, expectedSalary: text })}
+                onChangeText={(text) =>
+                  handleFieldChange('expectedSalary', text)
+                }
                 placeholder="$80,000 - $120,000"
                 returnKeyType="next"
-                onSubmitEditing={() => inputRefs.current['bio']?.focus()}
+                onSubmitEditing={() => {
+                  setTimeout(() => inputRefs.current['website']?.focus(), 100);
+                }}
                 blurOnSubmit={false}
               />
             </View>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Website</Text>
+              <TextInput
+                ref={(ref) => {
+                  inputRefs.current['website'] = ref!;
+                }}
+                style={[styles.input, errors.website && styles.inputError]}
+                value={formData.website}
+                onChangeText={(text) => handleFieldChange('website', text)}
+                placeholder="yourwebsite.com"
+                keyboardType="url"
+                autoCapitalize="none"
+                returnKeyType="next"
+                onSubmitEditing={() => {
+                  setTimeout(() => inputRefs.current['linkedin']?.focus(), 100);
+                }}
+                blurOnSubmit={false}
+              />
+              {errors.website && (
+                <Text style={styles.errorText}>{errors.website}</Text>
+              )}
+            </View>
           </View>
-          
+
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Bio</Text>
+            <Text style={styles.inputLabel}>LinkedIn</Text>
             <TextInput
-              ref={(ref) => inputRefs.current['bio'] = ref!}
-              style={[styles.input, styles.textArea]}
+              ref={(ref) => {
+                inputRefs.current['linkedin'] = ref!;
+              }}
+              style={[styles.input, errors.linkedin && styles.inputError]}
+              value={formData.linkedin}
+              onChangeText={(text) => handleFieldChange('linkedin', text)}
+              placeholder="linkedin.com/in/yourprofile"
+              keyboardType="url"
+              autoCapitalize="none"
+              returnKeyType="next"
+              onSubmitEditing={() => {
+                setTimeout(() => inputRefs.current['bio']?.focus(), 100);
+              }}
+              blurOnSubmit={false}
+            />
+            {errors.linkedin && (
+              <Text style={styles.errorText}>{errors.linkedin}</Text>
+            )}
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>
+              Bio{' '}
+              <Text style={styles.characterCount}>
+                ({formData.bio.length}/500)
+              </Text>
+            </Text>
+            <TextInput
+              ref={(ref) => {
+                inputRefs.current['bio'] = ref!;
+              }}
+              style={[
+                styles.input,
+                styles.textArea,
+                errors.bio && styles.inputError,
+              ]}
               value={formData.bio}
-              onChangeText={(text) => setFormData({ ...formData, bio: text })}
+              onChangeText={(text) => handleFieldChange('bio', text)}
               placeholder="Tell us about yourself and your career goals..."
               multiline
               numberOfLines={4}
+              maxLength={500}
               returnKeyType="done"
               blurOnSubmit={true}
             />
+            {errors.bio && <Text style={styles.errorText}>{errors.bio}</Text>}
           </View>
-          
+
+          {errors.submit && (
+            <Text style={styles.submitErrorText}>{errors.submit}</Text>
+          )}
+
           <View style={styles.formActions}>
-            <TouchableOpacity style={styles.cancelButton} onPress={handleCancel}>
+            <TouchableOpacity
+              style={styles.cancelButton}
+              onPress={handleCancel}
+              disabled={isSubmitting}
+            >
               <X size={16} color="#ef4444" />
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[
-                styles.saveButton, 
-                saveStatus.basic === 'saving' && styles.savingButton
-              ]} 
+                styles.saveButton,
+                isSubmitting && styles.savingButton,
+                submitStatus === 'success' && styles.successButton,
+              ]}
               onPress={handleSave}
-              disabled={saveStatus.basic === 'saving'}
+              disabled={isSubmitting}
             >
-              {saveStatus.basic === 'saving' ? (
-                <Text style={styles.saveButtonText}>Saving...</Text>
-              ) : saveStatus.basic === 'success' ? (
+              {isSubmitting ? (
+                <>
+                  <ActivityIndicator size="small" color="#ffffff" />
+                  <Text style={styles.saveButtonText}>Saving...</Text>
+                </>
+              ) : submitStatus === 'success' ? (
                 <>
                   <Check size={16} color="#ffffff" />
                   <Text style={styles.saveButtonText}>Saved!</Text>
@@ -451,39 +1006,51 @@ export default function ProfileTab() {
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </Animated.View>
       ) : (
         <View style={styles.infoContainer}>
-          <View style={styles.profilePictureSection}>
-            <View style={styles.profilePicture}>
-              {state.user?.profilePicture ? (
-                <Image source={{ uri: state.user.profilePicture }} style={styles.profileImage} />
-              ) : (
-                <User size={32} color="#64748b" />
-              )}
-            </View>
-            <TouchableOpacity style={styles.changePictureButton}>
-              <Camera size={16} color="#7c3aed" />
-              <Text style={styles.changePictureText}>Change Photo</Text>
-            </TouchableOpacity>
-          </View>
-          
           <View style={styles.infoItem}>
             <User size={16} color="#64748b" />
-            <Text style={styles.infoText}>{formData.fullName || 'Add your name'}</Text>
+            <Text style={styles.infoText}>
+              {formData.fullName || 'Add your name'}
+            </Text>
           </View>
           <View style={styles.infoItem}>
             <Mail size={16} color="#64748b" />
-            <Text style={styles.infoText}>{formData.email || 'Add your email'}</Text>
+            <Text style={styles.infoText}>
+              {formData.email || 'Add your email'}
+            </Text>
           </View>
+          {formData.phone && (
+            <View style={styles.infoItem}>
+              <Text style={styles.infoIcon}>📞</Text>
+              <Text style={styles.infoText}>{formData.phone}</Text>
+            </View>
+          )}
           <View style={styles.infoItem}>
             <MapPin size={16} color="#64748b" />
-            <Text style={styles.infoText}>{formData.location || 'Add your location'}</Text>
+            <Text style={styles.infoText}>
+              {formData.location || 'Add your location'}
+            </Text>
           </View>
           <View style={styles.infoItem}>
             <DollarSign size={16} color="#64748b" />
-            <Text style={styles.infoText}>{formData.expectedSalary || 'Add expected salary'}</Text>
+            <Text style={styles.infoText}>
+              {formData.expectedSalary || 'Add expected salary'}
+            </Text>
           </View>
+          {formData.website && (
+            <View style={styles.infoItem}>
+              <Text style={styles.infoIcon}>🌐</Text>
+              <Text style={styles.infoText}>{formData.website}</Text>
+            </View>
+          )}
+          {formData.linkedin && (
+            <View style={styles.infoItem}>
+              <Text style={styles.infoIcon}>💼</Text>
+              <Text style={styles.infoText}>{formData.linkedin}</Text>
+            </View>
+          )}
           {formData.bio && (
             <View style={styles.bioContainer}>
               <Text style={styles.bioText}>{formData.bio}</Text>
@@ -499,9 +1066,12 @@ export default function ProfileTab() {
       <View style={styles.skillsContainer}>
         <View style={styles.addSkillContainer}>
           <TextInput
-            style={styles.skillInput}
+            style={[styles.skillInput, errors.skill && styles.inputError]}
             value={newSkill}
-            onChangeText={setNewSkill}
+            onChangeText={(text) => {
+              setNewSkill(text);
+              if (errors.skill) setErrors((prev) => ({ ...prev, skill: '' }));
+            }}
             placeholder="Add a skill (e.g., React, Python, Design)"
             returnKeyType="done"
             onSubmitEditing={addSkill}
@@ -510,7 +1080,9 @@ export default function ProfileTab() {
             <Plus size={16} color="#ffffff" />
           </TouchableOpacity>
         </View>
-        
+
+        {errors.skill && <Text style={styles.errorText}>{errors.skill}</Text>}
+
         <View style={styles.skillsList}>
           {state.user?.skills?.map((skill) => (
             <View key={skill.id} style={styles.skillChip}>
@@ -528,10 +1100,16 @@ export default function ProfileTab() {
     </ProfileSection>
   );
 
-  const renderExperience = () => (
-    <ProfileSection title="Work Experience" icon={Briefcase} sectionKey="experience">
+  const renderWorkExperience = () => (
+    <ProfileSection
+      title="Work Experience"
+      icon={Briefcase}
+      sectionKey="experience"
+    >
       <View style={styles.experienceContainer}>
         <View style={styles.experienceForm}>
+          <Text style={styles.formSectionTitle}>Add Work Experience</Text>
+
           <View style={styles.inputRow}>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>
@@ -539,125 +1117,293 @@ export default function ProfileTab() {
               </Text>
               <TextInput
                 style={[styles.input, errors.company && styles.inputError]}
-                value={workExperience.company}
+                value={workExperienceForm.company}
                 onChangeText={(text) => {
-                  setWorkExperience({ ...workExperience, company: text });
-                  if (errors.company) setErrors({ ...errors, company: '' });
+                  setWorkExperienceForm((prev) => ({ ...prev, company: text }));
+                  if (errors.company)
+                    setErrors((prev) => ({ ...prev, company: '' }));
                 }}
                 placeholder="Company name"
                 returnKeyType="next"
+                onSubmitEditing={() => {
+                  setTimeout(() => inputRefs.current['position']?.focus(), 100);
+                }}
+                blurOnSubmit={false}
               />
-              {errors.company && <Text style={styles.errorText}>{errors.company}</Text>}
+              {errors.company && (
+                <Text style={styles.errorText}>{errors.company}</Text>
+              )}
             </View>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>
                 Position <Text style={styles.required}>*</Text>
               </Text>
               <TextInput
+                ref={(ref) => {
+                  inputRefs.current['position'] = ref!;
+                }}
                 style={[styles.input, errors.position && styles.inputError]}
-                value={workExperience.position}
+                value={workExperienceForm.position}
                 onChangeText={(text) => {
-                  setWorkExperience({ ...workExperience, position: text });
-                  if (errors.position) setErrors({ ...errors, position: '' });
+                  setWorkExperienceForm((prev) => ({
+                    ...prev,
+                    position: text,
+                  }));
+                  if (errors.position)
+                    setErrors((prev) => ({ ...prev, position: '' }));
                 }}
                 placeholder="Job title"
                 returnKeyType="next"
+                onSubmitEditing={() => {
+                  setTimeout(
+                    () => inputRefs.current['startDate']?.focus(),
+                    100
+                  );
+                }}
+                blurOnSubmit={false}
               />
-              {errors.position && <Text style={styles.errorText}>{errors.position}</Text>}
+              {errors.position && (
+                <Text style={styles.errorText}>{errors.position}</Text>
+              )}
             </View>
           </View>
-          
-          <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>
-              Duration <Text style={styles.required}>*</Text>
-            </Text>
-            <TextInput
-              style={[styles.input, errors.duration && styles.inputError]}
-              value={workExperience.duration}
-              onChangeText={(text) => {
-                setWorkExperience({ ...workExperience, duration: text });
-                if (errors.duration) setErrors({ ...errors, duration: '' });
-              }}
-              placeholder="e.g., Jan 2020 - Present"
-              returnKeyType="next"
-            />
-            {errors.duration && <Text style={styles.errorText}>{errors.duration}</Text>}
+
+          <View style={styles.inputRow}>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>
+                Start Date <Text style={styles.required}>*</Text>
+              </Text>
+              <TextInput
+                ref={(ref) => {
+                  inputRefs.current['startDate'] = ref!;
+                }}
+                style={[styles.input, errors.startDate && styles.inputError]}
+                value={workExperienceForm.startDate}
+                onChangeText={(text) => {
+                  setWorkExperienceForm((prev) => ({
+                    ...prev,
+                    startDate: text,
+                  }));
+                  if (errors.startDate)
+                    setErrors((prev) => ({ ...prev, startDate: '' }));
+                }}
+                placeholder="Jan 2020"
+                returnKeyType="next"
+                onSubmitEditing={() => {
+                  if (!workExperienceForm.current) {
+                    setTimeout(
+                      () => inputRefs.current['endDate']?.focus(),
+                      100
+                    );
+                  }
+                }}
+                blurOnSubmit={false}
+              />
+              {errors.startDate && (
+                <Text style={styles.errorText}>{errors.startDate}</Text>
+              )}
+            </View>
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>
+                End Date{' '}
+                {!workExperienceForm.current && (
+                  <Text style={styles.required}>*</Text>
+                )}
+              </Text>
+              <TextInput
+                ref={(ref) => {
+                  inputRefs.current['endDate'] = ref!;
+                }}
+                style={[
+                  styles.input,
+                  errors.endDate && styles.inputError,
+                  workExperienceForm.current && styles.inputDisabled,
+                ]}
+                value={
+                  workExperienceForm.current
+                    ? 'Present'
+                    : workExperienceForm.endDate
+                }
+                onChangeText={(text) => {
+                  if (!workExperienceForm.current) {
+                    setWorkExperienceForm((prev) => ({
+                      ...prev,
+                      endDate: text,
+                    }));
+                    if (errors.endDate)
+                      setErrors((prev) => ({ ...prev, endDate: '' }));
+                  }
+                }}
+                placeholder="Dec 2023"
+                editable={!workExperienceForm.current}
+                returnKeyType="next"
+                onSubmitEditing={() => {
+                  setTimeout(
+                    () => inputRefs.current['responsibilities']?.focus(),
+                    100
+                  );
+                }}
+                blurOnSubmit={false}
+              />
+              {errors.endDate && (
+                <Text style={styles.errorText}>{errors.endDate}</Text>
+              )}
+            </View>
           </View>
-          
+
+          <View style={styles.currentJobContainer}>
+            <Switch
+              value={workExperienceForm.current}
+              onValueChange={(value) => {
+                setWorkExperienceForm((prev) => ({
+                  ...prev,
+                  current: value,
+                  endDate: value ? '' : prev.endDate,
+                }));
+                if (errors.endDate)
+                  setErrors((prev) => ({ ...prev, endDate: '' }));
+              }}
+              trackColor={{ false: '#e2e8f0', true: '#7c3aed' }}
+              thumbColor={workExperienceForm.current ? '#ffffff' : '#f4f3f4'}
+            />
+            <Text style={styles.currentJobText}>I currently work here</Text>
+          </View>
+
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>
               Key Responsibilities <Text style={styles.required}>*</Text>
             </Text>
             <TextInput
-              style={[styles.input, styles.textArea, errors.responsibilities && styles.inputError]}
-              value={workExperience.responsibilities}
-              onChangeText={(text) => {
-                setWorkExperience({ ...workExperience, responsibilities: text });
-                if (errors.responsibilities) setErrors({ ...errors, responsibilities: '' });
+              ref={(ref) => {
+                inputRefs.current['responsibilities'] = ref!;
               }}
-              placeholder="Describe your key responsibilities and achievements (one per line)"
+              style={[
+                styles.input,
+                styles.textArea,
+                errors.responsibilities && styles.inputError,
+              ]}
+              value={workExperienceForm.responsibilities}
+              onChangeText={(text) => {
+                setWorkExperienceForm((prev) => ({
+                  ...prev,
+                  responsibilities: text,
+                }));
+                if (errors.responsibilities)
+                  setErrors((prev) => ({ ...prev, responsibilities: '' }));
+              }}
+              placeholder="• Developed and maintained web applications&#10;• Led a team of 5 developers&#10;• Improved system performance by 40%"
               multiline
               numberOfLines={4}
-              returnKeyType="done"
+              returnKeyType="next"
+              onSubmitEditing={() => {
+                setTimeout(
+                  () => inputRefs.current['achievements']?.focus(),
+                  100
+                );
+              }}
+              blurOnSubmit={false}
             />
-            {errors.responsibilities && <Text style={styles.errorText}>{errors.responsibilities}</Text>}
+            {errors.responsibilities && (
+              <Text style={styles.errorText}>{errors.responsibilities}</Text>
+            )}
           </View>
-          
-          <TouchableOpacity 
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Key Achievements (Optional)</Text>
+            <TextInput
+              ref={(ref) => {
+                inputRefs.current['achievements'] = ref!;
+              }}
+              style={[styles.input, styles.textArea]}
+              value={workExperienceForm.achievements}
+              onChangeText={(text) =>
+                setWorkExperienceForm((prev) => ({
+                  ...prev,
+                  achievements: text,
+                }))
+              }
+              placeholder="• Increased sales by 25%&#10;• Won Employee of the Year award&#10;• Successfully launched 3 major projects"
+              multiline
+              numberOfLines={3}
+              returnKeyType="done"
+              blurOnSubmit={true}
+            />
+          </View>
+
+          <TouchableOpacity
             style={[
               styles.saveExperienceButton,
-              saveStatus.experience === 'saving' && styles.savingButton
-            ]} 
+              isSubmitting && styles.savingButton,
+            ]}
             onPress={saveWorkExperience}
-            disabled={saveStatus.experience === 'saving'}
+            disabled={isSubmitting}
           >
-            {saveStatus.experience === 'saving' ? (
-              <Text style={styles.saveExperienceText}>Saving...</Text>
-            ) : saveStatus.experience === 'success' ? (
+            {isSubmitting ? (
               <>
-                <Check size={16} color="#ffffff" />
-                <Text style={styles.saveExperienceText}>Saved!</Text>
+                <ActivityIndicator size="small" color="#ffffff" />
+                <Text style={styles.saveExperienceText}>Saving...</Text>
               </>
             ) : (
               <>
                 <Save size={16} color="#ffffff" />
-                <Text style={styles.saveExperienceText}>Save Experience</Text>
+                <Text style={styles.saveExperienceText}>Add Experience</Text>
               </>
             )}
           </TouchableOpacity>
+
+          {errors.workExperience && (
+            <Text style={styles.errorText}>{errors.workExperience}</Text>
+          )}
         </View>
-        
-        {state.user?.workExperience?.map((exp) => (
-          <View key={exp.id} style={styles.experienceItem}>
-            <View style={styles.experienceHeader}>
-              <View style={styles.experienceInfo}>
-                <Text style={styles.experiencePosition}>{exp.position}</Text>
-                <Text style={styles.experienceCompany}>{exp.company} • {exp.duration}</Text>
+
+        {/* Existing Work Experience */}
+        <View style={styles.existingExperiences}>
+          <Text style={styles.existingTitle}>Your Work Experience</Text>
+          {state.user?.workExperience?.map((exp) => (
+            <View key={exp.id} style={styles.experienceItem}>
+              <View style={styles.experienceHeader}>
+                <View style={styles.experienceInfo}>
+                  <Text style={styles.experiencePosition}>{exp.position}</Text>
+                  <Text style={styles.experienceCompany}>
+                    {exp.company} • {exp.duration}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.removeItemButton}
+                  onPress={() => removeWorkExperience(exp.id)}
+                >
+                  <Trash2 size={16} color="#ef4444" />
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity 
-                style={styles.removeItemButton}
-                onPress={() => removeWorkExperience(exp.id)}
-              >
-                <X size={16} color="#ef4444" />
-              </TouchableOpacity>
+              <View style={styles.responsibilitiesList}>
+                {exp.responsibilities.map((resp, index) => (
+                  <Text key={index} style={styles.experienceResp}>
+                    • {resp}
+                  </Text>
+                ))}
+              </View>
             </View>
-            {exp.responsibilities.map((resp, index) => (
-              <Text key={index} style={styles.experienceResp}>• {resp}</Text>
-            ))}
-          </View>
-        ))}
-        
-        {(!state.user?.workExperience || state.user.workExperience.length === 0) && (
-          <Text style={styles.emptyText}>No work experience added yet</Text>
-        )}
+          ))}
+
+          {(!state.user?.workExperience ||
+            state.user.workExperience.length === 0) && (
+            <Text style={styles.emptyText}>No work experience added yet</Text>
+          )}
+        </View>
       </View>
     </ProfileSection>
   );
 
   const renderEducation = () => (
-    <ProfileSection title="Education" icon={GraduationCap} sectionKey="education">
+    <ProfileSection
+      title="Education"
+      icon={GraduationCap}
+      sectionKey="education"
+    >
       <View style={styles.experienceContainer}>
         <View style={styles.experienceForm}>
+          <Text style={styles.formSectionTitle}>Add Education</Text>
+
           <View style={styles.inputRow}>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>
@@ -665,200 +1411,317 @@ export default function ProfileTab() {
               </Text>
               <TextInput
                 style={[styles.input, errors.institution && styles.inputError]}
-                value={education.institution}
+                value={educationForm.institution}
                 onChangeText={(text) => {
-                  setEducation({ ...education, institution: text });
-                  if (errors.institution) setErrors({ ...errors, institution: '' });
+                  setEducationForm((prev) => ({ ...prev, institution: text }));
+                  if (errors.institution)
+                    setErrors((prev) => ({ ...prev, institution: '' }));
                 }}
                 placeholder="University/School name"
                 returnKeyType="next"
+                onSubmitEditing={() => {
+                  setTimeout(() => inputRefs.current['degree']?.focus(), 100);
+                }}
+                blurOnSubmit={false}
               />
-              {errors.institution && <Text style={styles.errorText}>{errors.institution}</Text>}
+              {errors.institution && (
+                <Text style={styles.errorText}>{errors.institution}</Text>
+              )}
             </View>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>
                 Degree <Text style={styles.required}>*</Text>
               </Text>
               <TextInput
+                ref={(ref) => {
+                  inputRefs.current['degree'] = ref!;
+                }}
                 style={[styles.input, errors.degree && styles.inputError]}
-                value={education.degree}
+                value={educationForm.degree}
                 onChangeText={(text) => {
-                  setEducation({ ...education, degree: text });
-                  if (errors.degree) setErrors({ ...errors, degree: '' });
+                  setEducationForm((prev) => ({ ...prev, degree: text }));
+                  if (errors.degree)
+                    setErrors((prev) => ({ ...prev, degree: '' }));
                 }}
                 placeholder="Bachelor's, Master's, etc."
                 returnKeyType="next"
+                onSubmitEditing={() => {
+                  setTimeout(() => inputRefs.current['field']?.focus(), 100);
+                }}
+                blurOnSubmit={false}
               />
-              {errors.degree && <Text style={styles.errorText}>{errors.degree}</Text>}
+              {errors.degree && (
+                <Text style={styles.errorText}>{errors.degree}</Text>
+              )}
             </View>
           </View>
-          
+
           <View style={styles.inputRow}>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>
                 Field of Study <Text style={styles.required}>*</Text>
               </Text>
               <TextInput
+                ref={(ref) => {
+                  inputRefs.current['field'] = ref!;
+                }}
                 style={[styles.input, errors.field && styles.inputError]}
-                value={education.field}
+                value={educationForm.field}
                 onChangeText={(text) => {
-                  setEducation({ ...education, field: text });
-                  if (errors.field) setErrors({ ...errors, field: '' });
+                  setEducationForm((prev) => ({ ...prev, field: text }));
+                  if (errors.field)
+                    setErrors((prev) => ({ ...prev, field: '' }));
                 }}
                 placeholder="Computer Science, Business, etc."
                 returnKeyType="next"
+                onSubmitEditing={() => {
+                  setTimeout(
+                    () => inputRefs.current['graduationYear']?.focus(),
+                    100
+                  );
+                }}
+                blurOnSubmit={false}
               />
-              {errors.field && <Text style={styles.errorText}>{errors.field}</Text>}
+              {errors.field && (
+                <Text style={styles.errorText}>{errors.field}</Text>
+              )}
             </View>
             <View style={styles.inputGroup}>
               <Text style={styles.inputLabel}>
                 Graduation Year <Text style={styles.required}>*</Text>
               </Text>
               <TextInput
-                style={[styles.input, errors.graduationYear && styles.inputError]}
-                value={education.graduationYear}
+                ref={(ref) => {
+                  inputRefs.current['graduationYear'] = ref!;
+                }}
+                style={[
+                  styles.input,
+                  errors.graduationYear && styles.inputError,
+                ]}
+                value={educationForm.graduationYear}
                 onChangeText={(text) => {
-                  setEducation({ ...education, graduationYear: text });
-                  if (errors.graduationYear) setErrors({ ...errors, graduationYear: '' });
+                  setEducationForm((prev) => ({
+                    ...prev,
+                    graduationYear: text,
+                  }));
+                  if (errors.graduationYear)
+                    setErrors((prev) => ({ ...prev, graduationYear: '' }));
                 }}
                 placeholder="2024"
                 keyboardType="numeric"
+                maxLength={4}
                 returnKeyType="next"
+                onSubmitEditing={() => {
+                  setTimeout(() => inputRefs.current['gpa']?.focus(), 100);
+                }}
+                blurOnSubmit={false}
               />
-              {errors.graduationYear && <Text style={styles.errorText}>{errors.graduationYear}</Text>}
+              {errors.graduationYear && (
+                <Text style={styles.errorText}>{errors.graduationYear}</Text>
+              )}
             </View>
           </View>
-          
+
           <View style={styles.inputGroup}>
             <Text style={styles.inputLabel}>GPA (Optional)</Text>
             <TextInput
+              ref={(ref) => {
+                inputRefs.current['gpa'] = ref!;
+              }}
               style={styles.input}
-              value={education.gpa}
-              onChangeText={(text) => setEducation({ ...education, gpa: text })}
-              placeholder="3.8/4.0"
+              value={educationForm.gpa}
+              onChangeText={(text) =>
+                setEducationForm((prev) => ({ ...prev, gpa: text }))
+              }
+              placeholder="3.8/4.0 or 3.8"
+              keyboardType="decimal-pad"
               returnKeyType="next"
+              onSubmitEditing={() => {
+                setTimeout(
+                  () => inputRefs.current['educationAchievements']?.focus(),
+                  100
+                );
+              }}
+              blurOnSubmit={false}
             />
           </View>
-          
+
           <View style={styles.inputGroup}>
-            <Text style={styles.inputLabel}>Achievements (Optional)</Text>
+            <Text style={styles.inputLabel}>
+              Achievements & Honors (Optional)
+            </Text>
             <TextInput
+              ref={(ref) => {
+                inputRefs.current['educationAchievements'] = ref!;
+              }}
               style={[styles.input, styles.textArea]}
-              value={education.achievements}
-              onChangeText={(text) => setEducation({ ...education, achievements: text })}
-              placeholder="Awards, honors, relevant coursework (one per line)"
+              value={educationForm.achievements}
+              onChangeText={(text) =>
+                setEducationForm((prev) => ({ ...prev, achievements: text }))
+              }
+              placeholder="• Dean's List&#10;• Magna Cum Laude&#10;• Relevant coursework: Data Structures, Algorithms"
               multiline
               numberOfLines={3}
               returnKeyType="done"
+              blurOnSubmit={true}
             />
           </View>
-          
-          <TouchableOpacity 
+
+          <TouchableOpacity
             style={[
               styles.saveExperienceButton,
-              saveStatus.education === 'saving' && styles.savingButton
-            ]} 
+              isSubmitting && styles.savingButton,
+            ]}
             onPress={saveEducation}
-            disabled={saveStatus.education === 'saving'}
+            disabled={isSubmitting}
           >
-            {saveStatus.education === 'saving' ? (
-              <Text style={styles.saveExperienceText}>Saving...</Text>
-            ) : saveStatus.education === 'success' ? (
+            {isSubmitting ? (
               <>
-                <Check size={16} color="#ffffff" />
-                <Text style={styles.saveExperienceText}>Saved!</Text>
+                <ActivityIndicator size="small" color="#ffffff" />
+                <Text style={styles.saveExperienceText}>Saving...</Text>
               </>
             ) : (
               <>
                 <Save size={16} color="#ffffff" />
-                <Text style={styles.saveExperienceText}>Save Education</Text>
+                <Text style={styles.saveExperienceText}>Add Education</Text>
               </>
             )}
           </TouchableOpacity>
+
+          {errors.education && (
+            <Text style={styles.errorText}>{errors.education}</Text>
+          )}
         </View>
-        
-        {state.user?.education?.map((edu) => (
-          <View key={edu.id} style={styles.experienceItem}>
-            <View style={styles.experienceHeader}>
-              <View style={styles.experienceInfo}>
-                <Text style={styles.experiencePosition}>{edu.degree} in {edu.field}</Text>
-                <Text style={styles.experienceCompany}>{edu.institution} • {edu.graduationYear}</Text>
-                {edu.gpa && <Text style={styles.experienceResp}>GPA: {edu.gpa}</Text>}
+
+        {/* Existing Education */}
+        <View style={styles.existingExperiences}>
+          <Text style={styles.existingTitle}>Your Education</Text>
+          {state.user?.education?.map((edu) => (
+            <View key={edu.id} style={styles.experienceItem}>
+              <View style={styles.experienceHeader}>
+                <View style={styles.experienceInfo}>
+                  <Text style={styles.experiencePosition}>
+                    {edu.degree} in {edu.field}
+                  </Text>
+                  <Text style={styles.experienceCompany}>
+                    {edu.institution} • {edu.graduationYear}
+                  </Text>
+                  {edu.gpa && (
+                    <Text style={styles.experienceGpa}>GPA: {edu.gpa}</Text>
+                  )}
+                </View>
+                <TouchableOpacity
+                  style={styles.removeItemButton}
+                  onPress={() => removeEducation(edu.id)}
+                >
+                  <Trash2 size={16} color="#ef4444" />
+                </TouchableOpacity>
               </View>
-              <TouchableOpacity 
-                style={styles.removeItemButton}
-                onPress={() => removeEducation(edu.id)}
-              >
-                <X size={16} color="#ef4444" />
-              </TouchableOpacity>
+              {edu.achievements.length > 0 && (
+                <View style={styles.responsibilitiesList}>
+                  {edu.achievements.map((achievement, index) => (
+                    <Text key={index} style={styles.experienceResp}>
+                      • {achievement}
+                    </Text>
+                  ))}
+                </View>
+              )}
             </View>
-            {edu.achievements.map((achievement, index) => (
-              <Text key={index} style={styles.experienceResp}>• {achievement}</Text>
-            ))}
-          </View>
-        ))}
-        
-        {(!state.user?.education || state.user.education.length === 0) && (
-          <Text style={styles.emptyText}>No education added yet</Text>
-        )}
+          ))}
+
+          {(!state.user?.education || state.user.education.length === 0) && (
+            <Text style={styles.emptyText}>No education added yet</Text>
+          )}
+        </View>
       </View>
     </ProfileSection>
   );
-
-  const getProfileCompletion = () => {
-    let completed = 0;
-    let total = 5;
-    
-    if (formData.fullName && formData.email && formData.location) completed++;
-    if (state.user?.skills && state.user.skills.length > 0) completed++;
-    if (state.user?.workExperience && state.user.workExperience.length > 0) completed++;
-    if (state.user?.education && state.user.education.length > 0) completed++;
-    if (formData.bio) completed++;
-    
-    return Math.round((completed / total) * 100);
-  };
 
   const renderProgress = () => (
     <View style={styles.progressSection}>
       <View style={styles.progressHeader}>
         <Text style={styles.progressTitle}>Profile Progress</Text>
-        <Text style={styles.progressPercentage}>{getProfileCompletion()}% Complete</Text>
+        <Text style={styles.progressPercentage}>
+          {getProfileCompletion()}% Complete
+        </Text>
       </View>
       <View style={styles.progressBar}>
-        <View style={[styles.progressFill, { width: `${getProfileCompletion()}%` }]} />
+        <Animated.View
+          style={[styles.progressFill, { width: `${getProfileCompletion()}%` }]}
+        />
       </View>
-      <Text style={styles.progressSubtitle}>Complete profile = Better job matches</Text>
-      
+      <Text style={styles.progressSubtitle}>
+        Complete profile = Better job matches
+      </Text>
+
       <View style={styles.progressItems}>
         <View style={styles.progressItem}>
-          <View style={[styles.progressDot, { 
-            backgroundColor: (formData.fullName && formData.email && formData.location) ? '#10b981' : '#e2e8f0' 
-          }]} />
+          <View
+            style={[
+              styles.progressDot,
+              {
+                backgroundColor:
+                  formData.fullName && formData.email && formData.location
+                    ? '#10b981'
+                    : '#e2e8f0',
+              },
+            ]}
+          />
           <Text style={styles.progressText}>Basic Info</Text>
         </View>
         <View style={styles.progressItem}>
-          <View style={[styles.progressDot, { 
-            backgroundColor: (state.user?.skills && state.user.skills.length > 0) ? '#10b981' : '#e2e8f0' 
-          }]} />
+          <View
+            style={[
+              styles.progressDot,
+              {
+                backgroundColor: profileImage ? '#10b981' : '#e2e8f0',
+              },
+            ]}
+          />
+          <Text style={styles.progressText}>Photo</Text>
+        </View>
+        <View style={styles.progressItem}>
+          <View
+            style={[
+              styles.progressDot,
+              {
+                backgroundColor:
+                  state.user?.skills && state.user.skills.length > 0
+                    ? '#10b981'
+                    : '#e2e8f0',
+              },
+            ]}
+          />
           <Text style={styles.progressText}>Skills</Text>
         </View>
         <View style={styles.progressItem}>
-          <View style={[styles.progressDot, { 
-            backgroundColor: (state.user?.workExperience && state.user.workExperience.length > 0) ? '#10b981' : '#e2e8f0' 
-          }]} />
+          <View
+            style={[
+              styles.progressDot,
+              {
+                backgroundColor:
+                  state.user?.workExperience &&
+                  state.user.workExperience.length > 0
+                    ? '#10b981'
+                    : '#e2e8f0',
+              },
+            ]}
+          />
           <Text style={styles.progressText}>Experience</Text>
         </View>
         <View style={styles.progressItem}>
-          <View style={[styles.progressDot, { 
-            backgroundColor: (state.user?.education && state.user.education.length > 0) ? '#10b981' : '#e2e8f0' 
-          }]} />
+          <View
+            style={[
+              styles.progressDot,
+              {
+                backgroundColor:
+                  state.user?.education && state.user.education.length > 0
+                    ? '#10b981'
+                    : '#e2e8f0',
+              },
+            ]}
+          />
           <Text style={styles.progressText}>Education</Text>
-        </View>
-        <View style={styles.progressItem}>
-          <View style={[styles.progressDot, { 
-            backgroundColor: formData.bio ? '#10b981' : '#e2e8f0' 
-          }]} />
-          <Text style={styles.progressText}>Bio</Text>
         </View>
       </View>
     </View>
@@ -866,32 +1729,46 @@ export default function ProfileTab() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         style={styles.keyboardAvoidingView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
         <View style={styles.dismissArea} onTouchEnd={Keyboard.dismiss}>
-          <ScrollView 
+          <ScrollView
             ref={scrollViewRef}
-            style={styles.scrollView} 
+            style={styles.scrollView}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
-            contentContainerStyle={styles.scrollContent}
+            contentContainerStyle={[
+              styles.scrollContent,
+              keyboardVisible && { paddingBottom: 100 },
+            ]}
           >
             <View style={styles.header}>
-              <Text style={styles.headerTitle}>Complete Your Profile</Text>
-              <Text style={styles.headerSubtitle}>Help us find the perfect jobs for you</Text>
+              <Text style={styles.headerTitle}>Complete Your Resume</Text>
+              <Text style={styles.headerSubtitle}>
+                Build a comprehensive professional profile
+              </Text>
             </View>
 
+            {renderPhotoSection()}
             {renderBasicInfo()}
             {renderSkills()}
-            {renderExperience()}
+            {renderWorkExperience()}
             {renderEducation()}
             {renderProgress()}
           </ScrollView>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Success Toast */}
+      <Animated.View style={[styles.successToast, successAnimatedStyle]}>
+        <Check size={20} color="#ffffff" />
+        <Text style={styles.successToastText}>
+          Profile updated successfully!
+        </Text>
+      </Animated.View>
     </SafeAreaView>
   );
 }
@@ -930,6 +1807,131 @@ const styles = StyleSheet.create({
     color: '#64748b',
     textAlign: 'center',
   },
+  photoSection: {
+    backgroundColor: '#ffffff',
+    margin: 20,
+    marginBottom: 0,
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 2,
+    alignItems: 'center',
+  },
+  photoSectionTitle: {
+    fontSize: 18,
+    fontFamily: 'Inter-SemiBold',
+    color: '#1e293b',
+    marginBottom: 16,
+  },
+  photoContainer: {
+    alignItems: 'center',
+  },
+  photoWrapper: {
+    position: 'relative',
+  },
+  profilePicture: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    position: 'relative',
+  },
+  profileImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+  },
+  placeholderImage: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  uploadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    borderRadius: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  photoActions: {
+    alignItems: 'center',
+  },
+  photoButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#f8fafc',
+    borderRadius: 20,
+  },
+  photoButtonText: {
+    fontSize: 14,
+    fontFamily: 'Inter-Medium',
+    color: '#7c3aed',
+  },
+  imageOptionsOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  imageOptionsModal: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 20,
+    width: SCREEN_WIDTH - 80,
+    maxWidth: 300,
+  },
+  imageOptionsTitle: {
+    fontSize: 18,
+    fontFamily: 'Inter-SemiBold',
+    color: '#1e293b',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  imageOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    marginBottom: 12,
+  },
+  imageOptionText: {
+    fontSize: 16,
+    fontFamily: 'Inter-Medium',
+    color: '#1e293b',
+  },
+  imageOptionCancel: {
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  imageOptionCancelText: {
+    fontSize: 16,
+    fontFamily: 'Inter-Medium',
+    color: '#64748b',
+  },
   section: {
     backgroundColor: '#ffffff',
     margin: 20,
@@ -963,34 +1965,6 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     backgroundColor: '#f8fafc',
   },
-  profilePictureSection: {
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  profilePicture: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#f1f5f9',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 12,
-  },
-  profileImage: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-  },
-  changePictureButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  changePictureText: {
-    fontSize: 14,
-    fontFamily: 'Inter-Medium',
-    color: '#7c3aed',
-  },
   infoContainer: {
     gap: 12,
   },
@@ -999,10 +1973,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  infoIcon: {
+    fontSize: 16,
+    width: 16,
+    textAlign: 'center',
+  },
   infoText: {
     fontSize: 16,
     fontFamily: 'Inter-Medium',
     color: '#334155',
+    flex: 1,
   },
   bioContainer: {
     marginTop: 8,
@@ -1035,6 +2015,11 @@ const styles = StyleSheet.create({
   required: {
     color: '#ef4444',
   },
+  characterCount: {
+    fontSize: 12,
+    color: '#64748b',
+    fontFamily: 'Inter-Medium',
+  },
   input: {
     borderWidth: 1,
     borderColor: '#e2e8f0',
@@ -1050,6 +2035,10 @@ const styles = StyleSheet.create({
     borderColor: '#ef4444',
     backgroundColor: '#fef2f2',
   },
+  inputDisabled: {
+    backgroundColor: '#f8fafc',
+    color: '#9ca3af',
+  },
   textArea: {
     height: 80,
     textAlignVertical: 'top',
@@ -1059,6 +2048,15 @@ const styles = StyleSheet.create({
     fontFamily: 'Inter-Medium',
     color: '#ef4444',
     marginTop: 4,
+  },
+  submitErrorText: {
+    fontSize: 14,
+    fontFamily: 'Inter-Medium',
+    color: '#ef4444',
+    textAlign: 'center',
+    backgroundColor: '#fef2f2',
+    padding: 12,
+    borderRadius: 8,
   },
   formActions: {
     flexDirection: 'row',
@@ -1092,6 +2090,9 @@ const styles = StyleSheet.create({
   },
   savingButton: {
     backgroundColor: '#a855f7',
+  },
+  successButton: {
+    backgroundColor: '#10b981',
   },
   saveButtonText: {
     color: '#ffffff',
@@ -1153,15 +2154,31 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
   },
   experienceContainer: {
-    gap: 20,
+    gap: 24,
   },
   experienceForm: {
-    gap: 16,
-    padding: 16,
+    padding: 20,
     backgroundColor: '#f8fafc',
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#e2e8f0',
+  },
+  formSectionTitle: {
+    fontSize: 16,
+    fontFamily: 'Inter-SemiBold',
+    color: '#1e293b',
+    marginBottom: 16,
+  },
+  currentJobContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginVertical: 8,
+  },
+  currentJobText: {
+    fontSize: 14,
+    fontFamily: 'Inter-Medium',
+    color: '#64748b',
   },
   saveExperienceButton: {
     flexDirection: 'row',
@@ -1171,15 +2188,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#10b981',
     borderRadius: 8,
     gap: 8,
-    marginTop: 8,
+    marginTop: 16,
   },
   saveExperienceText: {
     fontSize: 16,
     fontFamily: 'Inter-SemiBold',
     color: '#ffffff',
   },
+  existingExperiences: {
+    gap: 12,
+  },
+  existingTitle: {
+    fontSize: 16,
+    fontFamily: 'Inter-SemiBold',
+    color: '#1e293b',
+    marginBottom: 8,
+  },
   experienceItem: {
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#ffffff',
     padding: 16,
     borderRadius: 12,
     borderWidth: 1,
@@ -1189,7 +2215,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: 8,
+    marginBottom: 12,
   },
   experienceInfo: {
     flex: 1,
@@ -1204,18 +2230,25 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter-Medium',
     color: '#64748b',
-    marginBottom: 8,
+    marginBottom: 4,
+  },
+  experienceGpa: {
+    fontSize: 14,
+    fontFamily: 'Inter-Medium',
+    color: '#7c3aed',
+  },
+  responsibilitiesList: {
+    gap: 4,
   },
   experienceResp: {
     fontSize: 14,
     fontFamily: 'Inter-Regular',
     color: '#64748b',
     lineHeight: 20,
-    marginBottom: 2,
   },
   removeItemButton: {
-    padding: 4,
-    borderRadius: 4,
+    padding: 8,
+    borderRadius: 8,
     backgroundColor: '#fef2f2',
   },
   progressSection: {
@@ -1252,6 +2285,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#e2e8f0',
     borderRadius: 4,
     marginBottom: 8,
+    overflow: 'hidden',
   },
   progressFill: {
     height: '100%',
@@ -1283,5 +2317,25 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Inter-Medium',
     color: '#64748b',
+  },
+  successToast: {
+    position: 'absolute',
+    top: 100,
+    left: 20,
+    right: 20,
+    backgroundColor: '#10b981',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    gap: 8,
+    zIndex: 1000,
+  },
+  successToastText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontFamily: 'Inter-SemiBold',
   },
 });

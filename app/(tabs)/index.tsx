@@ -22,6 +22,7 @@ import { Bug, RefreshCw, Heart } from 'lucide-react-native';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
+
 export default function DiscoverTab() {
   const { state, dispatch } = useApp();
   const [showDebug, setShowDebug] = useState(false);
@@ -32,22 +33,24 @@ export default function DiscoverTab() {
   const opacity = useSharedValue(1);
 
   const currentJob = state.jobs[state.currentJobIndex];
+  
+  const swipeRight = () => {
+  translateX.value = withSpring(SCREEN_WIDTH);
+  opacity.value = withSpring(0, {}, () => {
+    runOnJS(handleSwipe)('right');
+  });
+};
 
+const swipeLeft = () => {
+  translateX.value = withSpring(-SCREEN_WIDTH);
+  opacity.value = withSpring(0, {}, () => {
+    runOnJS(handleSwipe)('left');
+  });
+};
   const handleSwipe = (direction: 'left' | 'right') => {
     if (direction === 'right') {
       dispatch({ type: 'SAVE_JOB', payload: currentJob });
     }
-    dispatch({ type: 'NEXT_JOB' });
-    resetCard();
-  };
-
-  const handleLike = () => {
-    dispatch({ type: 'SAVE_JOB', payload: currentJob });
-    dispatch({ type: 'NEXT_JOB' });
-    resetCard();
-  };
-
-  const handlePass = () => {
     dispatch({ type: 'NEXT_JOB' });
     resetCard();
   };
@@ -205,9 +208,9 @@ export default function DiscoverTab() {
           style={[styles.card, animatedStyle]}
           {...panResponder.panHandlers}
         >
-          <JobCard job={currentJob} onLike={handleLike} onPass={handlePass} />
+          <JobCard job={currentJob} onLike={swipeRight} onPass={swipeLeft} />
         </Animated.View>
-
+        
         <SwipeIndicator direction="left" style={swipeDirection} />
         <SwipeIndicator direction="right" style={swipeDirection} />
       </View>
