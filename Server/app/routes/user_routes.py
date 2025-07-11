@@ -1,19 +1,22 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 from app.models.user_models import UserBase, UserPreferences
 from datetime import datetime
 from app.controllers.crud_user import create_user, update_user, update_user_preferences, get_user
 
 router = APIRouter()
 
-@router.post("/users", response_model=UserBase)
+@router.post("/user", response_model=UserBase)
 async def create_user_endpoint(user: UserBase):
-    created_user = await create_user(user)
-    if not created_user:
-        raise HTTPException(status_code=400, detail="User creation failed")
-    return created_user
+    try:
+        return await create_user(user)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
 
 
-@router.get("/users/{user_id}", response_model=UserBase)
+@router.get("/user/{user_id}", response_model=UserBase)
 async def get_user_endpoint(user_id: str):
     user = await get_user(user_id)
     if not user:
@@ -21,7 +24,7 @@ async def get_user_endpoint(user_id: str):
     return user
 
 
-@router.patch("/users/{user_id}", response_model=UserBase)
+@router.patch("/user/{user_id}", response_model=UserBase)
 async def update_user_endpoint(user_id: str, update_data: dict):
     updated_user = await update_user(user_id, update_data)
     if not updated_user:
@@ -29,7 +32,7 @@ async def update_user_endpoint(user_id: str, update_data: dict):
     return updated_user
 
 
-@router.patch("/users/{user_id}/preferences", response_model=UserBase)
+@router.patch("/user/{user_id}/preferences", response_model=UserBase)
 async def update_user_preferences_endpoint(user_id: str, preferences: UserPreferences):
     updated_user = await update_user_preferences(user_id, preferences)
     if not updated_user:
